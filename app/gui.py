@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 )
 
 from app.config import settings
+from app.keywords import load_keywords, save_keywords
 from app.exporters.excel_exporter import export
 from app.services.analytics_service import build_summary
 from app.services.poll_service import fetch_polls
@@ -242,22 +243,21 @@ class SettingsDialog(QDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Настройки")
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(480)
         self.setModal(True)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(16)
+        layout.setSpacing(14)
 
+        # ── Токен ──
         layout.addWidget(QLabel("Токен VK"))
         self.token_input = QLineEdit(_load_token())
         self.token_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.token_input.setPlaceholderText("vk1.a.…")
         layout.addWidget(self.token_input)
 
-        hint = QLabel(
-            "Токен хранится в защищённом хранилище ОС (Keychain / Credential Manager)."
-        )
+        hint = QLabel("Токен хранится в защищённом хранилище ОС (Keychain / Credential Manager).")
         hint.setObjectName("subtitle")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -272,6 +272,32 @@ class SettingsDialog(QDialog):
         )
         layout.addWidget(show_btn)
 
+        # ── Разделитель ──
+        div = QFrame()
+        div.setObjectName("divider")
+        div.setFixedHeight(1)
+        layout.addWidget(div)
+
+        # ── Ключевые слова ──
+        kw_label = QLabel("Ключевые слова для классификации ответов")
+        kw_label.setObjectName("subtitle")
+        layout.addWidget(kw_label)
+
+        kw = load_keywords()
+
+        layout.addWidget(QLabel("Буду (через запятую)"))
+        self.yes_input = QLineEdit(", ".join(kw["yes"]))
+        layout.addWidget(self.yes_input)
+
+        layout.addWidget(QLabel("Не буду (через запятую)"))
+        self.no_input = QLineEdit(", ".join(kw["no"]))
+        layout.addWidget(self.no_input)
+
+        layout.addWidget(QLabel("Организатор (через запятую)"))
+        self.org_input = QLineEdit(", ".join(kw["org"]))
+        layout.addWidget(self.org_input)
+
+        # ── Кнопки ──
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
@@ -281,10 +307,26 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+        # ── Подпись ──
+        footer = QLabel('made by <a href="https://github.com/Hr0mE" style="color: #7c6af7;">Fes</a> with ♥')
+        footer.setOpenExternalLinks(True)
+        footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        footer.setObjectName("subtitle")
+        layout.addWidget(footer)
+
     def _on_save(self) -> None:
         token = self.token_input.text().strip()
         if token:
             _save_token(token)
+
+        def _parse(field: QLineEdit) -> list[str]:
+            return [w.strip() for w in field.text().split(",") if w.strip()]
+
+        save_keywords({
+            "yes": _parse(self.yes_input),
+            "no":  _parse(self.no_input),
+            "org": _parse(self.org_input),
+        })
         self.accept()
 
 

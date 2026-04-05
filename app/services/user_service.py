@@ -5,26 +5,26 @@ from typing import Any
 from app.models.poll import Poll
 from app.models.record import Record, VoteStatus
 from app.models.user import User
+from app.keywords import load_keywords
 from app.vk.client import VKAccessError, VKClient
 from app.vk.methods import get_conversation_members, get_voters
 
 logger = logging.getLogger(__name__)
 
-# Keywords for YES / NO classification
-_YES_WORDS = ["буду", "приду", "да", "я"]
-_NO_WORDS = ["не буду", "нет", "не"]
-_ORG_WORDS = ["для"]
 
-
-def _classify_answer(text: str) -> VoteStatus | None:
-    """Return YES/NO/None (ignore) based on answer text."""
+def _classify_answer(
+    text: str,
+    yes_words: list[str],
+    no_words: list[str],
+    org_words: list[str],
+) -> VoteStatus | None:
     lower = text.lower()
     status = None
-    if any(w in lower for w in _YES_WORDS):
+    if any(w in lower for w in yes_words):
         status = VoteStatus.YES
-    if any(w in lower for w in _NO_WORDS):
+    if any(w in lower for w in no_words):
         status = VoteStatus.NO
-    if any(w in lower for w in _ORG_WORDS):
+    if any(w in lower for w in org_words):
         status = VoteStatus.ORG
     return status
 
@@ -54,12 +54,14 @@ async def fetch_votes_for_poll(
     if poll.inaccessible:
         return [Record(user_id=uid, poll_date=poll.date, status=VoteStatus.NA) for uid in members]
 
+    kw = load_keywords()
+
     # Classify answers into YES / NO / ORG buckets
     yes_ids: list[int] = []
     no_ids: list[int] = []
     org_ids: list[int] = []
     for answer in poll.answers:
-        s = _classify_answer(answer.text)
+        s = _classify_answer(answer.text, kw["yes"], kw["no"], kw["org"])
         if s == VoteStatus.YES:
             yes_ids.append(answer.id)
         elif s == VoteStatus.NO:
