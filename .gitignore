@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.spec
+
+# Виртуальное окружение
+.env
+.venv
+venv/
+ENV/
+env/
+
+# Логи и временные файлы
+*.log
+*.tmp
+*.bak
+*.xlsx
+
+# Файлы IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Файлы сборки PyInstaller (если они вам не нужны в репозитории)
+VK Poll Tracker.spec
+
+# OS метаданные
+.DS_Store
+Thumbs.db
+
+# Кэши тестов и линтеров
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
