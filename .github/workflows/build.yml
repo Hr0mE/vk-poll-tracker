@@ -6,6 +6,9 @@ on:
       - "v*"        # запускается при git tag v1.0.0
   workflow_dispatch: # ручной запуск из интерфейса GitHub
 
+permissions:
+  contents: write 
+
 jobs:
   build:
     strategy:
