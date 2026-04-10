@@ -42,9 +42,10 @@ jobs:
           pyinstaller \
             --onefile \
             --windowed \
-            --name "VK Poll Tracker" \
+            --name "VK-Poll-Tracker-${{ matrix.name }}" \
             --collect-all pydantic_settings \
             --hidden-import "keyring.backends" \
+            --hidden-import "PyQt6.QtSvg" \
             app/gui.py
 
       - name: Build (Windows)
@@ -53,9 +54,10 @@ jobs:
           pyinstaller `
             --onefile `
             --windowed `
-            --name "VK Poll Tracker" `
+            --name "VK-Poll-Tracker-${{ matrix.name }}" `
             --collect-all pydantic_settings `
             --hidden-import "keyring.backends" `
+            --hidden-import "PyQt6.QtSvg" `
             app/gui.py
 
       - name: Upload artifact
@@ -82,3 +84,16 @@ jobs:
         with:
           files: artifacts/**/*
           generate_release_notes: true
+          body: |
+            ## Скачать
+
+            | Платформа | Файл |
+            |-----------|------|
+            | 🐧 Linux | `VK-Poll-Tracker-linux` |
+            | 🪟 Windows | `VK-Poll-Tracker-windows.exe` |
+            | 🍎 macOS | `VK-Poll-Tracker-macos` |
+
+            > **Linux / macOS:** после скачивания выдать права на запуск:
+            > ```
+            > chmod +x VK-Poll-Tracker-*
+            > ```
