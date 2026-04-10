@@ -2,6 +2,7 @@
 import logging
 from datetime import datetime
 
+from app.keywords import load_poll_keyword
 from app.models.poll import Poll, PollAnswer
 from app.vk.client import VKAccessError, VKClient
 from app.vk.methods import get_history, get_poll_by_id
@@ -20,6 +21,7 @@ async def fetch_polls(
     offset = 0
     batch = 200
     stop = False
+    poll_keyword = load_poll_keyword()
 
     logger.info("Fetching messages from peer_id=%d", peer_id)
 
@@ -45,6 +47,8 @@ async def fetch_polls(
 
             for att in msg.get("attachments", []):
                 if att.get("type") != "poll":
+                    continue
+                if poll_keyword and poll_keyword not in att["poll"]["question"].lower():
                     continue
 
                 raw_poll = att["poll"]

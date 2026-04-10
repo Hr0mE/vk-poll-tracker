@@ -8,10 +8,11 @@ from pathlib import Path
 
 import keyring
 from PyQt6.QtCore import (
-    QDate, QRectF, QThread, Qt, QTimer, pyqtSignal,
+    QDate, QRectF, QThread, Qt, QTimer, QUrl, pyqtSignal,
 )
 from PyQt6.QtGui import (
-    QColor, QConicalGradient, QPainter, QPen, QTextCharFormat, QTextCursor,
+    QColor, QConicalGradient, QDesktopServices, QPainter, QPen,
+    QTextCharFormat, QTextCursor,
 )
 from PyQt6.QtWidgets import (
     QApplication, QComboBox, QDateEdit, QDialog, QDialogButtonBox,
@@ -26,7 +27,7 @@ from app.exporters.excel_exporter import export
 from app.services.analytics_service import build_summary
 from app.services.poll_service import fetch_polls
 from app.services.user_service import fetch_members, fetch_votes_for_poll
-from app.vk.client import VKClient
+from app.vk.client import VKAccessError, VKClient
 from app.vk.rate_limiter import RateLimiter
 
 # ── Palette ───────────────────────────────────────────────────────────────────
@@ -156,8 +157,17 @@ QTextEdit {{
 QLabel#title {{ font-size: 22px; font-weight: 700; color: {TEXT}; }}
 QLabel#subtitle {{ font-size: 12px; color: {SUBTEXT}; }}
 QLabel#step {{ font-size: 12px; color: {SUBTEXT}; }}
+QLabel#hint {{ font-size: 12px; color: {YELLOW}; }}
 QFrame#divider {{ background-color: {BORDER}; max-height: 1px; }}
 QDialogButtonBox QPushButton {{ min-width: 80px; }}
+QPushButton#open_file {{
+    background-color: {SURFACE};
+    color: {GREEN};
+    border: 1px solid {GREEN};
+    border-radius: 8px;
+    padding: 7px 16px;
+    font-weight: 600;
+}}
 """
 
 # ── Keyring helpers ───────────────────────────────────────────────────────────
@@ -240,7 +250,7 @@ class Spinner(QWidget):
 
 # ── Settings dialog ───────────────────────────────────────────────────────────
 class SettingsDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, first_run: bool = False) -> None:
         super().__init__(parent)
         self.setWindowTitle("Настройки")
         self.setMinimumWidth(480)
@@ -249,6 +259,13 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(14)
+
+        # ── Баннер первого запуска ──
+        if first_run:
+            banner = QLabel("👋  Добро пожаловать! Для начала работы введите токен VK.")
+            banner.setWordWrap(True)
+            banner.setStyleSheet(f"color: {BLUE}; font-size: 13px; font-weight: 600;")
+            layout.addWidget(banner)
 
         # ── Токен ──
         layout.addWidget(QLabel("Токен VK"))
@@ -278,12 +295,28 @@ class SettingsDialog(QDialog):
         div.setFixedHeight(1)
         layout.addWidget(div)
 
-        # ── Ключевые слова ──
-        kw_label = QLabel("Ключевые слова для классификации ответов")
-        kw_label.setObjectName("subtitle")
-        layout.addWidget(kw_label)
+        # ── Фильтр опросников ──
+        poll_label = QLabel("Фильтр опросников")
+        poll_label.setObjectName("subtitle")
+        layout.addWidget(poll_label)
 
         kw = load_keywords()
+
+        layout.addWidget(QLabel("Ключевое слово в названии опроса"))
+        self.poll_keyword_input = QLineEdit(kw.get("poll_keyword", "тренировка"))
+        self.poll_keyword_input.setPlaceholderText("Оставьте пустым, чтобы брать все опросы")
+        layout.addWidget(self.poll_keyword_input)
+
+        # ── Разделитель ──
+        div2 = QFrame()
+        div2.setObjectName("divider")
+        div2.setFixedHeight(1)
+        layout.addWidget(div2)
+
+        # ── Ключевые слова ──
+        kw_label = QLabel("Варианты ответов опроса")
+        kw_label.setObjectName("subtitle")
+        layout.addWidget(kw_label)
 
         layout.addWidget(QLabel("Буду (через запятую)"))
         self.yes_input = QLineEdit(", ".join(kw["yes"]))
@@ -320,9 +353,10 @@ class SettingsDialog(QDialog):
             _save_token(token)
 
         def _parse(field: QLineEdit) -> list[str]:
-            return [w.strip() for w in field.text().split(",") if w.strip()]
+            return [w.strip().lower() for w in field.text().split(",") if w.strip()]
 
         save_keywords({
+            "poll_keyword": self.poll_keyword_input.text().strip().lower(),
             "yes": _parse(self.yes_input),
             "no":  _parse(self.no_input),
             "org": _parse(self.org_input),
@@ -457,12 +491,24 @@ class PipelineWorker(QThread):
                     self.log_line.emit(
                         f"Опрос {i + 1}/{len(polls)}: {poll.date.strftime('%d.%m.%Y')}", "info"
                     )
-                    records = await fetch_votes_for_poll(client, poll, members)
+                    try:
+                        records = await fetch_votes_for_poll(client, poll, members)
+                    except VKAccessError:
+                        self.log_line.emit(
+                            f"  ↳ Нет доступа к опросу от {poll.date.strftime('%d.%m.%Y')} — пропущен", "warn"
+                        )
+                        continue
+                    except Exception as e:
+                        self.log_line.emit(
+                            f"  ↳ Не удалось получить данные опроса от {poll.date.strftime('%d.%m.%Y')}: {e} — пропущен", "warn"
+                        )
+                        continue
                     all_records.extend(records)
                     self.progress.emit(50 + int(40 * (i + 1) / len(polls)), f"Голоса {i + 1}/{len(polls)}")
 
                 self.progress.emit(95, "Формируем отчёт...")
                 self.log_line.emit("Формируем Excel-отчёт...", "info")
+                self.output.parent.mkdir(parents=True, exist_ok=True)
                 summary = build_summary(all_records, members)
                 export(all_records, members, summary, self.output)
 
@@ -473,8 +519,9 @@ class PipelineWorker(QThread):
         except Exception as e:
             self.log_line.emit(f"Ошибка: {e}", "error")
             hint = _hint_for_error(str(e))
-            if hint:
-                self.log_line.emit(hint, "warn")
+            if not hint:
+                hint = "Совет: Проверьте интернет-соединение и корректность токена. Если ошибка повторяется — попробуйте позже."
+            self.log_line.emit(hint, "warn")
             self.finished.emit(False, "")
 
 
@@ -487,7 +534,13 @@ class MainWindow(QMainWindow):
         self.resize(780, 820)
         self._worker: PipelineWorker | None = None
         self._peers: list[dict] = _load_peers()
+        self._last_output: Path | None = None
+        self._running = False
         self._build_ui()
+        self._update_run_btn_state()
+        # Первый запуск без токена — сразу открыть настройки
+        if not _load_token():
+            self._open_settings(first_run=True)
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -508,12 +561,12 @@ class MainWindow(QMainWindow):
         header_col.addWidget(subtitle)
         header_row.addLayout(header_col, 1)
 
-        settings_btn = QPushButton("⚙")
-        settings_btn.setObjectName("icon")
-        settings_btn.setToolTip("Настройки (токен VK)")
-        settings_btn.setFixedSize(36, 36)
-        settings_btn.clicked.connect(self._open_settings)
-        header_row.addWidget(settings_btn, 0, Qt.AlignmentFlag.AlignTop)
+        self.settings_btn = QPushButton("⚙")
+        self.settings_btn.setObjectName("icon")
+        self.settings_btn.setToolTip("Настройки (токен VK)")
+        self.settings_btn.setFixedSize(36, 36)
+        self.settings_btn.clicked.connect(self._open_settings)
+        header_row.addWidget(self.settings_btn, 0, Qt.AlignmentFlag.AlignTop)
         layout.addLayout(header_row)
 
         divider = QFrame()
@@ -531,6 +584,7 @@ class MainWindow(QMainWindow):
             self.peer_combo.sizePolicy().horizontalPolicy(),
             self.peer_combo.sizePolicy().verticalPolicy(),
         )
+        self.peer_combo.currentIndexChanged.connect(self._update_run_btn_state)
         self._refresh_peer_combo()
 
         add_peer_btn = QPushButton("+")
@@ -560,11 +614,17 @@ class MainWindow(QMainWindow):
         self.date_from = QDateEdit(today.addDays(-30))
         self.date_from.setCalendarPopup(True)
         self.date_from.setDisplayFormat("dd.MM.yyyy")
+        self.date_from.setMaximumDate(today)
 
         to_label = QLabel("По")
         self.date_to = QDateEdit(today)
         self.date_to.setCalendarPopup(True)
         self.date_to.setDisplayFormat("dd.MM.yyyy")
+        self.date_to.setMinimumDate(today.addDays(-30))
+        self.date_to.setMaximumDate(today)
+
+        self.date_from.dateChanged.connect(lambda d: self.date_to.setMinimumDate(d))
+        self.date_to.dateChanged.connect(lambda d: self.date_from.setMaximumDate(d))
 
         period_layout.addWidget(from_label)
         period_layout.addWidget(self.date_from, 1)
@@ -577,7 +637,9 @@ class MainWindow(QMainWindow):
         output_layout = QHBoxLayout(output_group)
         output_layout.setSpacing(10)
 
-        self.output_input = QLineEdit("report.xlsx")
+        _desktop = Path.home() / "Desktop"
+        default_output = str((_desktop if _desktop.exists() else Path.home()) / "report.xlsx")
+        self.output_input = QLineEdit(default_output)
         browse_btn = QPushButton("Обзор")
         browse_btn.setObjectName("secondary")
         browse_btn.setFixedWidth(90)
@@ -600,6 +662,11 @@ class MainWindow(QMainWindow):
         run_row.addWidget(self.run_btn, 1)
         run_row.addWidget(self.spinner)
         layout.addLayout(run_row)
+
+        self.run_hint = QLabel("")
+        self.run_hint.setObjectName("hint")
+        self.run_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.run_hint)
 
         # ── Прогресс ──
         progress_layout = QVBoxLayout()
@@ -627,15 +694,25 @@ class MainWindow(QMainWindow):
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setMinimumHeight(160)
+        self.log_view.setPlaceholderText("Здесь появятся логи выполнения...")
         layout.addWidget(self.log_view, 1)
+
+        self.open_file_btn = QPushButton("📂  Открыть отчёт")
+        self.open_file_btn.setObjectName("open_file")
+        self.open_file_btn.clicked.connect(self._open_last_file)
+        self.open_file_btn.hide()
+        layout.addWidget(self.open_file_btn)
 
     # ── Peers ─────────────────────────────────────────────────────────────────
 
     def _refresh_peer_combo(self) -> None:
         self.peer_combo.blockSignals(True)
         self.peer_combo.clear()
-        for p in self._peers:
-            self.peer_combo.addItem(f"{p['name']}  ({p['peer_id']})", userData=p["peer_id"])
+        if self._peers:
+            for p in self._peers:
+                self.peer_combo.addItem(f"{p['name']}  ({p['peer_id']})", userData=p["peer_id"])
+        else:
+            self.peer_combo.addItem("Нажмите + чтобы добавить беседу", userData=None)
         self.peer_combo.blockSignals(False)
 
     def _add_peer(self) -> None:
@@ -645,10 +722,11 @@ class MainWindow(QMainWindow):
             _save_peers(self._peers)
             self._refresh_peer_combo()
             self.peer_combo.setCurrentIndex(len(self._peers) - 1)
+            self._update_run_btn_state()
 
     def _delete_peer(self) -> None:
         idx = self.peer_combo.currentIndex()
-        if idx < 0:
+        if idx < 0 or not self._peers:
             return
         name = self._peers[idx]["name"]
         box = QMessageBox(self)
@@ -661,11 +739,37 @@ class MainWindow(QMainWindow):
             self._peers.pop(idx)
             _save_peers(self._peers)
             self._refresh_peer_combo()
+            self._update_run_btn_state()
+
+    # ── State ─────────────────────────────────────────────────────────────────
+
+    def _update_run_btn_state(self) -> None:
+        if self._running:
+            return
+        has_token = bool(_load_token())
+        has_peer  = self.peer_combo.currentData() is not None
+
+        self.run_btn.setEnabled(has_token and has_peer)
+
+        if not has_token:
+            self.run_hint.setText("⚠  Укажите токен VK в настройках (⚙)")
+            self.settings_btn.setToolTip("⚠ Токен не задан — нажмите чтобы настроить")
+            self.settings_btn.setText("⚙ ●")
+        elif not has_peer:
+            self.run_hint.setText("⚠  Добавьте беседу через кнопку +")
+            self.settings_btn.setToolTip("Настройки")
+            self.settings_btn.setText("⚙")
+        else:
+            self.run_hint.setText("")
+            self.settings_btn.setToolTip("Настройки")
+            self.settings_btn.setText("⚙")
 
     # ── Settings ──────────────────────────────────────────────────────────────
 
-    def _open_settings(self) -> None:
-        SettingsDialog(self).exec()
+    def _open_settings(self, first_run: bool = False) -> None:
+        dlg = SettingsDialog(self, first_run=first_run)
+        dlg.exec()
+        self._update_run_btn_state()
 
     # ── Run ───────────────────────────────────────────────────────────────────
 
@@ -675,6 +779,10 @@ class MainWindow(QMainWindow):
         )
         if path:
             self.output_input.setText(path)
+
+    def _open_last_file(self) -> None:
+        if self._last_output and self._last_output.exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._last_output)))
 
     def _run(self) -> None:
         peer_id = self.peer_combo.currentData()
@@ -694,9 +802,15 @@ class MainWindow(QMainWindow):
             23, 59, 59,
         )
 
+        if self.date_from.date() > self.date_to.date():
+            QMessageBox.warning(self, "Ошибка", "Дата начала не может быть позже даты окончания.")
+            return
+
         self.log_view.clear()
         self.progress_bar.setValue(0)
+        self._running = True
         self.run_btn.setEnabled(False)
+        self.open_file_btn.hide()
         self.spinner.start()
 
         self._worker = PipelineWorker(
@@ -742,9 +856,12 @@ class MainWindow(QMainWindow):
 
     def _on_finished(self, success: bool, message: str) -> None:
         self.spinner.stop()
-        self.run_btn.setEnabled(True)
+        self._running = False
+        self._update_run_btn_state()
         if success:
+            self._last_output = Path(message)
             self._append_log(f"Готово → {message}", "ok")
+            self.open_file_btn.show()
         else:
             self._append_log("Выполнение прервано.", "error")
 
