@@ -36,13 +36,37 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt pyinstaller
 
-      - name: Build (Linux / macOS)
-        if: runner.os != 'Windows'
+      - name: Generate ICNS icon (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p logo.iconset
+          for size in 16 32 64 128 256 512; do
+            sips -z $size $size app/assets/logo.png --out logo.iconset/icon_${size}x${size}.png
+          done
+          iconutil -c icns logo.iconset -o app/assets/logo.icns
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
         run: |
           pyinstaller \
             --onefile \
             --windowed \
             --name "VK-Poll-Tracker-${{ matrix.name }}" \
+            --add-data "app/assets:assets" \
+            --collect-all pydantic_settings \
+            --hidden-import "keyring.backends" \
+            --hidden-import "PyQt6.QtSvg" \
+            app/gui.py
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          pyinstaller \
+            --onefile \
+            --windowed \
+            --name "VK-Poll-Tracker-${{ matrix.name }}" \
+            --add-data "app/assets:assets" \
+            --icon "app/assets/logo.icns" \
             --collect-all pydantic_settings \
             --hidden-import "keyring.backends" \
             --hidden-import "PyQt6.QtSvg" \
@@ -55,6 +79,8 @@ jobs:
             --onefile `
             --windowed `
             --name "VK-Poll-Tracker-${{ matrix.name }}" `
+            --add-data "app/assets;assets" `
+            --icon "app/assets/logo.ico" `
             --collect-all pydantic_settings `
             --hidden-import "keyring.backends" `
             --hidden-import "PyQt6.QtSvg" `

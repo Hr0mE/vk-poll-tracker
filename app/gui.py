@@ -202,6 +202,14 @@ def _make_github_icon(size: int = 16) -> QIcon | None:
     except Exception:
         return None
 
+# ── Resource path ─────────────────────────────────────────────────────────────
+def _resource(name: str) -> Path:
+    """Return path to a bundled asset — works in both frozen and dev mode."""
+    if hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / "assets" / name
+    return Path(__file__).parent / "assets" / name
+
+
 # ── Keyring helpers ───────────────────────────────────────────────────────────
 _SVC   = "vk_poll_tracker"
 _TOKEN = "vk_token"
@@ -603,6 +611,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("VK Poll Tracker")
         self.setMinimumSize(720, 780)
         self.resize(780, 820)
+        _logo = _resource("logo.png")
+        if _logo.exists():
+            self.setWindowIcon(QIcon(str(_logo)))
         self._worker: PipelineWorker | None = None
         self._peers: list[dict] = _load_peers()
         self._last_output: Path | None = None
